@@ -32,7 +32,9 @@ typedef enum {
     EMPTY_TILE,
     VISITED_TILE,
     PLAYER_TILE,
-    FOOD_TILE
+    FOOD_TILE,
+    CLONE_TILE,
+    CLONE_AND_PLAYER_TILE
 } TileState;
 
 typedef struct {
@@ -64,6 +66,11 @@ typedef struct {
 } Snake;
 
 typedef struct {
+    Snake snake;
+    size_t player_path_idx;
+} SnakeClone;
+
+typedef struct {
     Position position;
     TileState value;
 } Food;
@@ -72,6 +79,8 @@ typedef struct {
     Tile tileGrid[ROWS][COLUMNS];
     Snake player;
     Food food;
+    Position *player_path;
+    SnakeClone *clones;
 } Game;
 
 Game game;
@@ -88,7 +97,7 @@ void InitTileGrid(void) {
     }
 }
 
-void InitSnake(Snake *snake, TileState value, size_t row, size_t column, size_t length) {
+void InitSnake(Snake *snake, TileState value, size_t row, size_t column, size_t length, bool is_player) {
     snake->tiles = nullptr;
     snake->value = value;
     snake->dir = RIGHT_DIRECTION;
@@ -103,6 +112,10 @@ void InitSnake(Snake *snake, TileState value, size_t row, size_t column, size_t 
 
     for (size_t i = 0; i < length; i++) {
         arrpush(snake->tiles, start_position);
+    }
+
+    if (is_player) {
+        arrpush(game.player_path, start_position);
     }
 }
 
@@ -123,8 +136,10 @@ void InitFood(Food *food) {
 }
 
 void InitGame(void) {
+    game.player_path = nullptr;
+
     InitTileGrid();
-    InitSnake(&game.player, PLAYER_TILE, 13, 24, 3);
+    InitSnake(&game.player, PLAYER_TILE, 13, 24, 3, true);
     InitFood(&game.food);
 }
 
@@ -138,6 +153,10 @@ Color GetTileColor(TileState state) {
             return (Color) { 255, 255, 255, 255 };
         case FOOD_TILE:
             return (Color) { 40, 255, 40, 255 };
+        case CLONE_TILE:
+            return (Color) { 255, 40, 40, 255 };
+        case CLONE_AND_PLAYER_TILE:
+            return (Color) { 200, 20, 160, 255 };
     }
 }
 
@@ -190,8 +209,13 @@ void SnakeMarkTiles(Snake *snake) {
     for (size_t i = 0; i < len; i++) {
         Position *p = &snake->tiles[i];
         Tile *tile = &game.tileGrid[p->row][p->column];
-        tile->state = snake->value;
         tile->visited = true;
+
+        if ((tile->state == PLAYER_TILE && snake->value == CLONE_TILE) || (tile->state == CLONE_TILE && snake->value == PLAYER_TILE)) {
+            tile->state = CLONE_AND_PLAYER_TILE;
+        } else {
+            tile->state = snake->value;
+        }
     }
 }
 
@@ -225,6 +249,7 @@ void SnakeDoStep(Snake *snake) {
         snake->tiles[i] = snake->tiles[i-1];
     }
     snake->tiles[0] = new_head;
+    arrpush(game.player_path, new_head);
 
     if (snake->has_next_next_dir) {
         snake->next_dir = snake->next_next_dir;
@@ -277,6 +302,56 @@ void SnakeGrow(Snake *snake) {
     arrpush(snake->tiles, last);
 }
 
+void SpawnClone(Snake *player) {
+    Snake snake;
+    size_t row = game.player_path[0].row;
+    size_t column = game.player_path[0].column;
+    size_t length = arrlen(player->tiles);
+    InitSnake(&snake, CLONE_TILE, row, column, length, false);
+
+    SnakeClone clone = (SnakeClone) {
+        .snake = snake,
+        .player_path_idx = 0
+    };
+
+    arrpush(game.clones, clone);
+}
+
+void ClonesMarkTiles() {
+    size_t clones_len = arrlen(game.clones);
+    for (size_t i = 0; i < clones_len; i++) {
+        SnakeMarkTiles(&game.clones[i].snake);
+    }
+}
+
+void MoveClones() {
+    size_t clones_len = arrlen(game.clones);
+    for (size_t i = 0; i < clones_len; i++) {
+        SnakeClone *clone = &game.clones[i];
+
+        Position next = game.player_path[clone->player_path_idx];
+        size_t len = arrlen(clone->snake.tiles);
+        for (size_t j = len - 1; j > 0; j--) {
+            clone->snake.tiles[j] = clone->snake.tiles[j-1];
+        }
+        clone->snake.tiles[0] = next;
+        clone->player_path_idx++;
+    }
+}
+
+void ReduceClones(void) {
+    size_t clones_len = arrlen(game.clones);
+    for (int i = clones_len - 1; i >= 0; i--) {
+        SnakeClone *clone = &game.clones[i];
+
+        arrpop(clone->snake.tiles);
+
+        if (arrlen(clone->snake.tiles) == 0) {
+            arrdelswap(game.clones, i);
+        }
+    }
+}
+
 int main(void) {
     srand(time(nullptr));
 
@@ -299,10 +374,13 @@ int main(void) {
         UpdateTileGrid(dt);
 
         if (stepTimer >= STEP_INTERVAL) {
+            MoveClones();
             SnakeDoStep(&game.player);
 
             Position *head = &game.player.tiles[0];
             if (head->row == game.food.position.row && head->column == game.food.position.column) {
+                ReduceClones();
+                SpawnClone(&game.player);
                 SnakeGrow(&game.player);
                 foodWasEaten = true;
             }
@@ -311,6 +389,7 @@ int main(void) {
         }
 
         SnakeMarkTiles(&game.player);
+        ClonesMarkTiles();
         if (foodWasEaten) {
             foodWasEaten = false;
             PlaceFoodRandomly(&game.food);
