@@ -28,6 +28,19 @@
 #define GRID_OFFSET_X 12
 #define GRID_OFFSET_Y 35
 
+Font arcadeFont;
+
+typedef struct {
+    float speed;
+    float scale;
+    float target_scale;
+} ScaleEffect;
+
+typedef struct {
+    float duration;
+    float intensity;
+} ShakeEffect;
+
 typedef enum {
     EMPTY_TILE,
     VISITED_TILE,
@@ -76,6 +89,7 @@ typedef struct {
 } Food;
 
 typedef struct {
+    bool game_over;
     Tile tileGrid[ROWS][COLUMNS];
     Snake player;
     Food food;
@@ -137,6 +151,8 @@ void InitFood(Food *food) {
 
 void InitGame(void) {
     game.player_path = nullptr;
+    game.clones = nullptr;
+    game.game_over = false;
 
     InitTileGrid();
     InitSnake(&game.player, PLAYER_TILE, 13, 24, 3, true);
@@ -177,6 +193,7 @@ void DrawTileGrid(void) {
                 .y = tile->state == EMPTY_TILE ? TILE_SIZE / 2.0 : TILE_SIZE,
             };
             Color color = GetTileColor(tile->state);
+            color = Fade(color, game.game_over ? 0.7 : 1.0);
 
             Vector2 center = (Vector2) {
                 .x = drawX + TILE_SPACING / 2.0 + TILE_SIZE / 2.0,
@@ -211,7 +228,10 @@ void SnakeMarkTiles(Snake *snake) {
         Tile *tile = &game.tileGrid[p->row][p->column];
         tile->visited = true;
 
-        if ((tile->state == PLAYER_TILE && snake->value == CLONE_TILE) || (tile->state == CLONE_TILE && snake->value == PLAYER_TILE)) {
+        bool is_player_tile = tile->state == PLAYER_TILE || tile->state == CLONE_AND_PLAYER_TILE;
+        bool is_clone_tile = tile->state == CLONE_TILE || tile->state == CLONE_AND_PLAYER_TILE;
+
+        if ((is_player_tile && snake->value == CLONE_TILE) || (is_clone_tile && snake->value == PLAYER_TILE)) {
             tile->state = CLONE_AND_PLAYER_TILE;
         } else {
             tile->state = snake->value;
@@ -326,8 +346,13 @@ void ClonesMarkTiles() {
 
 void MoveClones() {
     size_t clones_len = arrlen(game.clones);
+    size_t player_path_len = arrlen(game.player_path);
     for (size_t i = 0; i < clones_len; i++) {
         SnakeClone *clone = &game.clones[i];
+
+        if (clone->player_path_idx >= player_path_len) {
+            continue;
+        }
 
         Position next = game.player_path[clone->player_path_idx];
         size_t len = arrlen(clone->snake.tiles);
@@ -352,6 +377,91 @@ void ReduceClones(void) {
     }
 }
 
+bool CheckForCollisions(Snake *player) {
+    Position *head = &player->tiles[0];
+    size_t len = arrlen(player->tiles);
+    for (size_t i = 1; i < len; i++) {
+        Position *p = &player->tiles[i];
+        if (p->row == head->row && p->column == head->column) {
+            return true;
+        }
+    }
+
+    size_t clones_len = arrlen(game.clones);
+    for (size_t i = 0; i < clones_len; i++) {
+        SnakeClone *clone = &game.clones[i];
+        len = arrlen(clone->snake.tiles);
+        for (size_t j = 0; j < len; j++) {
+            Position *p = &clone->snake.tiles[j];
+            if (p->row == head->row && p->column == head->column) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void RestartGame(void) {
+    if (game.player_path) {
+        arrfree(game.player_path);
+    }
+    if (game.clones) {
+        arrfree(game.clones);
+    }
+    InitGame();
+}
+
+void DrawGameOver(void) {
+    const char *game_over_text = "GAME OVER";
+    size_t game_over_font_size = 70;
+    Vector2 game_over_size = MeasureTextEx(arcadeFont, game_over_text, game_over_font_size, 0);
+    DrawTextEx(
+        arcadeFont,
+        game_over_text,
+        (Vector2) {
+            .x = (GAME_WIDTH - game_over_size.x) / 2.0,
+            .y = (GAME_HEIGHT - game_over_size.y) / 3.0
+        },
+        game_over_font_size,
+        0,
+        WHITE
+    );
+
+    const char *restart_game_text = "PRESS ENTER TO RESTART";
+    size_t restart_game_font_size = 24;
+    Vector2 restart_game_size = MeasureTextEx(arcadeFont, restart_game_text, restart_game_font_size, 0);
+    DrawTextEx(
+        arcadeFont,
+        restart_game_text,
+        (Vector2) {
+            .x = (GAME_WIDTH - restart_game_size.x) / 2.0,
+            .y = (GAME_HEIGHT - restart_game_size.y) * 2 / 3.0
+        },
+        restart_game_font_size,
+        0,
+        WHITE
+    );
+}
+
+void UpdateScaleEffect(ScaleEffect *effect, float dt) {
+    if (effect->scale != effect->target_scale) {
+        effect->scale -= (effect->scale - effect->target_scale) * dt * effect->speed;
+        if (fabs(effect->scale - effect->target_scale) < 0.001) {
+            effect->scale = effect->target_scale;
+        }
+    }
+}
+
+void UpdateShakeEffect(ShakeEffect *effect, float dt) {
+    if (effect->duration > 0) {
+        effect->duration -= dt;
+        if (effect->duration < 0) {
+            effect->duration = 0;
+        }
+    }
+}
+
 int main(void) {
     srand(time(nullptr));
 
@@ -360,6 +470,18 @@ int main(void) {
     SetTargetFPS(60);
 
     RenderTexture2D target = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
+    arcadeFont = LoadFont("assets/fonts/ARCADE_N.TTF");
+
+    ScaleEffect scale_effect = (ScaleEffect) {
+        .scale = 1.0,
+        .target_scale = 1.0,
+        .speed = 5.0
+    };
+
+    ShakeEffect shake_effect = (ShakeEffect) {
+        .duration = 0,
+        .intensity = 20
+    };
 
     InitGame();
 
@@ -372,17 +494,28 @@ int main(void) {
         SnakeHandleInput(&game.player);
 
         UpdateTileGrid(dt);
+        UpdateScaleEffect(&scale_effect, dt);
+        UpdateShakeEffect(&shake_effect, dt);
 
         if (stepTimer >= STEP_INTERVAL) {
             MoveClones();
-            SnakeDoStep(&game.player);
 
-            Position *head = &game.player.tiles[0];
-            if (head->row == game.food.position.row && head->column == game.food.position.column) {
-                ReduceClones();
-                SpawnClone(&game.player);
-                SnakeGrow(&game.player);
-                foodWasEaten = true;
+            if (!game.game_over) {
+                SnakeDoStep(&game.player);
+
+                Position *head = &game.player.tiles[0];
+                if (head->row == game.food.position.row && head->column == game.food.position.column) {
+                    ReduceClones();
+                    SpawnClone(&game.player);
+                    SnakeGrow(&game.player);
+                    foodWasEaten = true;
+                }
+
+                game.game_over = CheckForCollisions(&game.player);
+                if (game.game_over) {
+                    scale_effect.scale = 1.3;
+                    shake_effect.duration = 0.3;
+                }
             }
 
             stepTimer = 0;
@@ -399,20 +532,43 @@ int main(void) {
         BeginTextureMode(target);
             ClearBackground(BLACK);
             DrawTileGrid();
+            if (game.game_over) {
+                DrawGameOver();
+            }
         EndTextureMode();
 
         BeginDrawing();
             ClearBackground(BLACK);
 
+            float scaledWidth = WINDOW_WIDTH * scale_effect.scale;
+            float scaledHeight = WINDOW_HEIGHT * scale_effect.scale;
+
+            Vector2 shake_offset = {0};
+            if (shake_effect.duration > 0) {
+                shake_offset.x = GetRandomValue(-shake_effect.intensity, shake_effect.intensity);
+                shake_offset.y = GetRandomValue(-shake_effect.intensity, shake_effect.intensity);
+            }
+
+            Rectangle destination = (Rectangle) {
+                .x = -(scaledWidth - WINDOW_WIDTH) / 2.0 + shake_offset.x,
+                .y = -(scaledHeight - WINDOW_HEIGHT) / 2.0 + shake_offset.y,
+                .width = scaledWidth,
+                .height = scaledHeight
+            };
+
             DrawTexturePro(
                 target.texture,
                 (Rectangle) {0, 0, GAME_WIDTH, -GAME_HEIGHT},
-                (Rectangle) {0, 0, WINDOW_WIDTH, WINDOW_HEIGHT},
+                destination,
                 (Vector2) { 0 },
                 0,
                 WHITE
             );
         EndDrawing();
+
+        if (game.game_over && IsKeyPressed(KEY_ENTER)) {
+            RestartGame();
+        }
     }
 
     CloseWindow();
