@@ -527,6 +527,14 @@ int main(void) {
     SetTargetFPS(60);
 
     RenderTexture2D target = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
+    RenderTexture2D tmpA = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
+    RenderTexture2D tmpB = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
+    RenderTexture2D blurred = LoadRenderTexture(GAME_WIDTH, GAME_HEIGHT);
+
+    Shader thresholdShader = LoadShader(0, "assets/shaders/threshold.glsl");
+    Shader blurShader = LoadShader(0, "assets/shaders/blur.glsl");
+    int blurDirectionLoc = GetShaderLocation(blurShader, "direction");
+
     arcadeFont = LoadFont("assets/fonts/ARCADE_N.TTF");
 
     ScaleEffect scale_effect = (ScaleEffect) {
@@ -603,7 +611,78 @@ int main(void) {
             if (game.game_over) {
                 DrawGameOver();
             }
+            DrawFPS(10, 10);
         EndTextureMode();
+
+        BeginTextureMode(tmpA);
+            ClearBackground(BLACK);
+            BeginShaderMode(thresholdShader);
+                DrawTexturePro(
+                    target.texture,
+                    (Rectangle) {0, 0, target.texture.width, -target.texture.height},
+                    (Rectangle) {0, 0, tmpA.texture.width, tmpA.texture.height},
+                    (Vector2) {0},
+                    0,
+                    WHITE
+                );
+            EndShaderMode();
+        EndTextureMode();
+
+        for (size_t i = 0; i < 10; i++) {
+            BeginTextureMode(tmpB);
+                ClearBackground(BLACK);
+                BeginShaderMode(blurShader);
+                    SetShaderValue(blurShader, blurDirectionLoc, &(Vector2) {1.0 / tmpA.texture.width, 0}, SHADER_UNIFORM_VEC2);
+                    DrawTexturePro(
+                        tmpA.texture,
+                        (Rectangle) {0, 0, tmpA.texture.width, -tmpA.texture.height},
+                        (Rectangle) {0, 0, tmpB.texture.width, tmpB.texture.height},
+                        (Vector2) {0},
+                        0,
+                        WHITE
+                    );
+                EndShaderMode();
+            EndTextureMode();
+
+            BeginTextureMode(tmpA);
+                ClearBackground(BLACK);
+                BeginShaderMode(blurShader);
+                    SetShaderValue(blurShader, blurDirectionLoc, &(Vector2) {0, 1.0 / tmpB.texture.height}, SHADER_UNIFORM_VEC2);
+                    DrawTexturePro(
+                        tmpB.texture,
+                        (Rectangle) {0, 0, tmpB.texture.width, -tmpB.texture.height},
+                        (Rectangle) {0, 0, tmpA.texture.width, tmpA.texture.height},
+                        (Vector2) {0},
+                        0,
+                        WHITE
+                    );
+                EndShaderMode();
+            EndTextureMode();
+        }
+
+        BeginTextureMode(blurred);
+            ClearBackground(BLACK);
+            DrawTexturePro(
+                target.texture,
+                (Rectangle) {0, 0, target.texture.width, -target.texture.height},
+                (Rectangle) {0, 0, blurred.texture.width, blurred.texture.height},
+                (Vector2) {0},
+                0,
+                WHITE
+            );
+
+            BeginBlendMode(BLEND_ADDITIVE);
+                DrawTexturePro(
+                    tmpA.texture,
+                    (Rectangle) {0, 0, tmpA.texture.width, -tmpA.texture.height},
+                    (Rectangle) {0, 0, blurred.texture.width, blurred.texture.height},
+                    (Vector2) {0},
+                    0,
+                    WHITE
+                );
+            EndBlendMode();
+        EndTextureMode();
+
 
         BeginDrawing();
             ClearBackground(BLACK);
@@ -625,7 +704,7 @@ int main(void) {
             };
 
             DrawTexturePro(
-                target.texture,
+                blurred.texture,
                 (Rectangle) {0, 0, GAME_WIDTH, -GAME_HEIGHT},
                 destination,
                 (Vector2) { 0 },
