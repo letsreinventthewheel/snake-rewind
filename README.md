@@ -2,6 +2,8 @@
 
 Snake Rewind is a retro modern remake of the classic Snake game, built from scratch in **C** using **Raylib**. But this isn't just Snake - it's Snake with a twist: clones of your past moves become your greatest threat, all wrapped in a glowing CRT-inspired visual package.
 
+https://github.com/user-attachments/assets/f498b315-90d5-489f-8a1e-162d00eeebd8
+
 ## 🎥 Watch the YouTube Series
 
 [Snake Rewind playlist](https://www.youtube.com/playlist?list=PLI7p1zrAYQeUb67kPtsyduLk1aJChzIQZ)
